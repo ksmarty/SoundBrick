@@ -225,6 +225,7 @@ func (switcher *Switcher) openSettings() {
 		outputNames := [4]widget.Editor{}
 		ipAddr := widget.Editor{}
 		key := widget.Editor{}
+		keyButton := widget.Clickable{}
 
 		for e := range switcher.settings.Events() {
 			switch e := e.(type) {
@@ -234,23 +235,48 @@ func (switcher *Switcher) openSettings() {
 				return e.Err
 			case system.FrameEvent:
 
+				// Layout Context
 				gtx := layout.NewContext(&ops, e)
 
-				Colors := map[string]color.NRGBA{
-					"bg":        {0x16, 0x16, 0x1a, 0xff},
-					"focused":   {0x7f, 0x5a, 0xf0, 0xff},
-					"unfocused": {0x01, 0x01, 0x01, 0xff},
-					"secondary": {0x94, 0xa1, 0xb2, 0xff},
-					"primary":   {0xff, 0xff, 0xfe, 0xff},
-					"hint":      {0xa7, 0xa9, 0xbe, 0x30},
+				Colors := struct {
+					bg        color.NRGBA
+					focused   color.NRGBA
+					unfocused color.NRGBA
+					primary   color.NRGBA
+					secondary color.NRGBA
+					tertiary  color.NRGBA
+					hint      color.NRGBA
+				}{
+					bg:        color.NRGBA{0x16, 0x16, 0x1a, 0xff},
+					focused:   color.NRGBA{0x7f, 0x5a, 0xf0, 0xff},
+					unfocused: color.NRGBA{0x01, 0x01, 0x01, 0xff},
+					primary:   color.NRGBA{0xff, 0xff, 0xfe, 0xff},
+					secondary: color.NRGBA{0x94, 0xa1, 0xb2, 0xff},
+					tertiary:  color.NRGBA{0x2c, 0xb6, 0x7d, 0xff},
+					hint:      color.NRGBA{0xa7, 0xa9, 0xbe, 0x30},
 				}
 
-				// Background
-				paint.Fill(&ops, Colors["bg"])
+				// Background ---------------------------------------
+
+				paint.Fill(&ops, Colors.bg)
 
 				// Events -------------------------------------------
 
-				// Layout -------------------------------------------
+				if keyButton.Clicked() {
+					utils.OpenLink("https://www.toptal.com/developers/keycode")
+				}
+
+				// Generators ---------------------------------------
+
+				spacer := func(size int, hw string) layout.FlexChild {
+					var x layout.Spacer
+					if hw == "H" {
+						x.Height = unit.Dp(size)
+					} else {
+						x.Width = unit.Dp(size)
+					}
+					return layout.Rigid(x.Layout)
+				}
 
 				margins := layout.Inset{
 					Top:    unit.Dp(5),
@@ -265,14 +291,14 @@ func (switcher *Switcher) openSettings() {
 					})
 				}
 
-				inputGen := func(we *widget.Editor, sc *StableChannelS, label string) layout.FlexChild {
+				inputGen := func(we *widget.Editor, sc *StableChannelS, label string, widgets ...layout.FlexChild) layout.FlexChild {
 					return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						var borderColor color.NRGBA
 
 						if we.Focused() {
-							borderColor = Colors["focused"]
+							borderColor = Colors.focused
 						} else {
-							borderColor = Colors["unfocused"]
+							borderColor = Colors.unfocused
 						}
 
 						border := widget.Border{
@@ -280,6 +306,38 @@ func (switcher *Switcher) openSettings() {
 							CornerRadius: unit.Dp(3),
 							Width:        unit.Dp(2),
 						}
+
+						elems := []layout.FlexChild{
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								title := material.H6(th, label)
+								title.Color = Colors.secondary
+								return title.Layout(gtx)
+							}),
+
+							spacer(5, "W"),
+
+							layout.Flexed(100, func(gtx layout.Context) layout.Dimensions {
+								ed := material.Editor(th, we, label)
+								ed.Color = Colors.secondary
+								ed.HintColor = Colors.hint
+								we.SingleLine = true
+
+								// Only update when text has changed
+								if we.Text() != sc.V {
+									go sc.send(we.Text())
+								}
+								// Set initial value
+								if we.Text() == "" && !we.Focused() {
+									we.SetText(sc.V)
+								}
+
+								return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return margins.Layout(gtx, ed.Layout)
+								})
+							}),
+						}
+
+						combined := append(elems, widgets...)
 
 						return margins.Layout(gtx,
 							func(gtx layout.Context) layout.Dimensions {
@@ -289,34 +347,8 @@ func (switcher *Switcher) openSettings() {
 									Alignment: layout.Middle,
 									WeightSum: 0,
 								}.Layout(gtx,
-									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										title := material.H6(th, label)
-										title.Color = Colors["secondary"]
-										return title.Layout(gtx)
-									}),
-
-									layout.Rigid(
-										layout.Spacer{Width: unit.Dp(5)}.Layout,
-									),
-
-									layout.Flexed(100, func(gtx layout.Context) layout.Dimensions {
-										ed := material.Editor(th, we, label)
-										ed.Color = Colors["secondary"]
-										ed.HintColor = Colors["hint"]
-										we.SingleLine = true
-										// Only update when text has changed
-										if we.Text() != sc.V {
-											// fmt.Printf("%s -> %s\n", sc.V, we.Text())
-											go sc.send(we.Text())
-										}
-										// Set initial value
-										if we.Text() == "" && !we.Focused() {
-											we.SetText(sc.V)
-										}
-										return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-											return margins.Layout(gtx, ed.Layout)
-										})
-									}))
+									combined...,
+								)
 							},
 						)
 					})
@@ -325,20 +357,12 @@ func (switcher *Switcher) openSettings() {
 				titleGen := func(label string, size func(th *material.Theme, txt string) material.LabelStyle) layout.FlexChild {
 					return marginLayout(func(gtx layout.Context) layout.Dimensions {
 						title := size(th, label)
-						title.Color = Colors["primary"]
+						title.Color = Colors.primary
 						return title.Layout(gtx)
 					})
 				}
 
-				spacer := func(size int, hw string) layout.FlexChild {
-					var x layout.Spacer
-					if hw == "H" {
-						x.Height = unit.Dp(size)
-					} else {
-						x.Width = unit.Dp(size)
-					}
-					return layout.Rigid(x.Layout)
-				}
+				// Layout -------------------------------------------
 
 				layout.Flex{
 					Axis:    layout.Vertical,
@@ -350,7 +374,6 @@ func (switcher *Switcher) openSettings() {
 					spacer(10, "H"),
 
 					titleGen("Labels", material.H6),
-
 					inputGen(&outputNames[0], &switcher.outputTitles[0], "Output 1"),
 					inputGen(&outputNames[1], &switcher.outputTitles[1], "Output 2"),
 					inputGen(&outputNames[2], &switcher.outputTitles[2], "Output 3"),
@@ -359,14 +382,21 @@ func (switcher *Switcher) openSettings() {
 					spacer(20, "H"),
 
 					titleGen("Connection", material.H6),
-
 					inputGen(&ipAddr, &switcher.ipAddr, "IP Address"),
 
 					spacer(20, "H"),
 
 					titleGen("Controls", material.H6),
+					inputGen(&key, &switcher.key, "Hotkey",
+						spacer(5, "W"),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							btn := material.Button(th, &keyButton, "Find keycodes")
+							btn.Background = Colors.tertiary
+							btn.Inset = margins
 
-					inputGen(&key, &switcher.key, "Hotkey"),
+							return btn.Layout(gtx)
+						}),
+					),
 				)
 
 				e.Frame(gtx.Ops)
