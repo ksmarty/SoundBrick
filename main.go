@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/electricbubble/go-toast"
 	"github.com/getlantern/systray"
 	"golang.design/x/hotkey"
 	"golang.design/x/hotkey/mainthread"
@@ -61,18 +60,9 @@ func (sc *StableChannelI) send(msg int) {
 	sc.C <- sc.V
 }
 
-func alert(title string, content string) {
-	go toast.Push(content,
-		toast.WithTitle(title),
-		toast.WithAppID("Sound Brick"),
-		toast.WithAudio(toast.Default),
-		toast.WithShortDuration(),
-		toast.WithIconRaw(icon.Data),
-	)
-}
-
 func (switcher *Switcher) cycleOutput() {
-	x := switcher.output.V
+	val, _ := switcher.config.Section("").Key("current_output").Int()
+	x := val
 	x++
 	x %= 4
 
@@ -81,13 +71,14 @@ func (switcher *Switcher) cycleOutput() {
 
 func (switcher *Switcher) muteToggle() bool {
 	var val int
+	cur, _ := switcher.config.Section("").Key("current_output").Int()
 
-	if switcher.output.V != -1 {
-		switcher.prevOutput = switcher.output.V
+	if cur != -1 {
+		switcher.prevOutput = cur
 		println(switcher.prevOutput)
 		val = -1
 		go switcher.output.send(val)
-		alert("Muted!", "Output has been muted.")
+		utils.Alert("Muted!", "Output has been muted.")
 	} else {
 		val = switcher.prevOutput
 	}
@@ -99,7 +90,7 @@ func (switcher *Switcher) muteToggle() bool {
 }
 
 func (switcher *Switcher) connect() {
-	s, _ := net.ResolveUDPAddr("udp4", "192.168.1.71:4210")
+	s, _ := net.ResolveUDPAddr("udp4", switcher.config.Section("").Key("ip").String())
 	c, err := net.DialUDP("udp4", nil, s)
 
 	if err != nil {
@@ -119,8 +110,8 @@ func (switcher *Switcher) setupHotkeys() {
 		go func() {
 			defer wg.Done()
 
-			// https://keycode-visualizer.netlify.app/
-			hk := hotkey.New([]hotkey.Modifier{}, hotkey.Key(220))
+			k, _ := strconv.Atoi(switcher.key.V)
+			hk := hotkey.New([]hotkey.Modifier{}, hotkey.Key(k))
 
 			defer hk.Unregister()
 			defer fmt.Printf("Hotkey %v is unregistered\n", hk)
@@ -143,9 +134,14 @@ func (switcher *Switcher) setupHotkeys() {
 func (switcher *Switcher) sendUDP(command int) string {
 	fmt.Printf("Sending: %d\n", command)
 
-	switcher.UDP.Write([]byte(strconv.Itoa(command)))
+	_, err := switcher.UDP.Write([]byte(strconv.Itoa(command)))
 
-	buffer := make([]byte, 1024)
+	if err != nil {
+		fmt.Println(err)
+		return err.Error()
+	}
+
+	buffer := make([]byte, 512)
 	n, _, err := switcher.UDP.ReadFromUDP(buffer)
 
 	if err != nil {
@@ -153,16 +149,62 @@ func (switcher *Switcher) sendUDP(command int) string {
 		return err.Error()
 	}
 
-	go switcher.output.send(command)
+	switcher.output.send(command)
+	switcher.config.Section("").Key("current_output").SetValue(strconv.Itoa(command))
+
 	if command > -1 && command < 5 {
-		alert("Output Changed!", fmt.Sprintf("Current output: %s", switcher.outputTitles[command].V))
+		utils.Alert(
+			"Output Changed!",
+			fmt.Sprintf("Current output: %s", switcher.outputTitles[command].V),
+		)
 	}
 
 	return string(buffer[0:n])
 }
 
-func (switcher *Switcher) setupMisc() {
+func importConfig(switcher *Switcher) {
+	go func() {
+		sec := switcher.config.Section("")
+
+		for i := 0; i < 4; i++ {
+			switcher.outputTitles[i].V = sec.Key(fmt.Sprintf("output%d", i+1)).String()
+		}
+		switcher.key.V = sec.Key("hotkey").String()
+		switcher.ipAddr.V = sec.Key("ip").String()
+
+		for {
+			select {
+			case v := <-switcher.outputTitles[0].C:
+				sec.Key("output1").SetValue(v)
+			case v := <-switcher.outputTitles[1].C:
+				sec.Key("output2").SetValue(v)
+			case v := <-switcher.outputTitles[2].C:
+				sec.Key("output3").SetValue(v)
+			case v := <-switcher.outputTitles[3].C:
+				sec.Key("output4").SetValue(v)
+
+			case v := <-switcher.ipAddr.C:
+				sec.Key("ip").SetValue(v)
+
+			case v := <-switcher.key.C:
+				sec.Key("hotkey").SetValue(v)
+
+				// case v := <-switcher.output.C:
+				// 	sec.Key("current_output").SetValue(strconv.Itoa(v))
+			}
+		}
+	}()
+}
+
+func (switcher *Switcher) setupConfig() {
 	switcher.output.C = make(chan int)
+
+	for i := range switcher.outputTitles {
+		if switcher.outputTitles[i].C == nil {
+			switcher.outputTitles[i].C = make(chan string)
+			switcher.outputTitles[i].V = (fmt.Sprintf("Output %d", i+1))
+		}
+	}
 
 	configPath := "config.ini"
 
@@ -178,41 +220,38 @@ func (switcher *Switcher) setupMisc() {
 		return
 	}
 
-	cfg.Section("").NewKey("output1", "Output 1")
-	cfg.Section("").NewKey("output2", "Output 2")
-	cfg.Section("").NewKey("output3", "Output 3")
-	cfg.Section("").NewKey("output4", "Output 4")
+	sec := cfg.Section("")
 
-	cfg.Section("").NewKey("current_output", "0")
+	// Keys and their default values
+	keys := map[string]string{
+		"output1":        "Output 1",
+		"output2":        "Output 2",
+		"output3":        "Output 3",
+		"output4":        "Output 4",
+		"current_output": "0",
+		"ip":             "",
+		"hotkey":         "220",
+	}
 
-	cfg.Section("").NewKey("ip", "")
-
-	cfg.Section("").NewKey("hotkey", "220")
+	for k, v := range keys {
+		if !sec.HasKey(k) {
+			sec.NewKey(k, v)
+		}
+	}
 
 	switcher.config = cfg
 
-	err = cfg.SaveTo(configPath)
-
-	if err != nil {
-		fmt.Printf("Error: %s", err.Error())
-		return
-	}
+	importConfig(switcher)
 }
 
 func (switcher *Switcher) setupSettings() {
 	go func() {
 		w := app.NewWindow(
 			app.Title("Sound Brick"),
-			app.Size(unit.Dp(400), unit.Dp(500)),
+			app.Size(unit.Dp(400), unit.Dp(435)),
 		)
-		switcher.settings = w
 
-		for i := range switcher.outputTitles {
-			if switcher.outputTitles[i].C == nil {
-				switcher.outputTitles[i].C = make(chan string)
-				switcher.outputTitles[i].V = (fmt.Sprintf("Output %d", i+1))
-			}
-		}
+		switcher.settings = w
 	}()
 }
 
@@ -230,6 +269,12 @@ func (switcher *Switcher) openSettings() {
 		for e := range switcher.settings.Events() {
 			switch e := e.(type) {
 			case system.DestroyEvent:
+				// Save settings on close
+				err := switcher.config.SaveTo("config.ini")
+				if err != nil {
+					fmt.Println(err)
+				}
+
 				// Create new window when old one is destroyed
 				switcher.setupSettings()
 				return e.Err
@@ -322,12 +367,14 @@ func (switcher *Switcher) openSettings() {
 								ed.HintColor = Colors.hint
 								we.SingleLine = true
 
+								content := we.Text()
+
 								// Only update when text has changed
-								if we.Text() != sc.V {
-									go sc.send(we.Text())
+								if content != sc.V && content != "" {
+									sc.send(content)
 								}
 								// Set initial value
-								if we.Text() == "" && !we.Focused() {
+								if content == "" && !we.Focused() {
 									we.SetText(sc.V)
 								}
 
@@ -413,31 +460,23 @@ func (switcher *Switcher) openSettings() {
 func (switcher *Switcher) setupTray() {
 	go systray.Run(func() {
 		systray.SetIcon(icon.Data)
-		systray.SetTitle("Sound Brick")
-		systray.SetTooltip("Sound Brick")
 
-		systray.AddMenuItem("Sound Brick", "Sound Brick")
+		title := "Sound Brick"
+		systray.SetTitle(title)
+		systray.SetTooltip(title)
+
+		systray.AddMenuItem(title, title)
 		systray.AddSeparator()
 		mSelect := systray.AddMenuItem("Select Output", "Select output")
 		mMute := systray.AddMenuItem("Mute", "Mute devices")
 		mSettings := systray.AddMenuItem("Settings", "Open settings")
 		mQuit := systray.AddMenuItem("Quit", "Quit")
 
-		outs, outsChs := [4]*systray.MenuItem{}, [4](chan struct{}){}
+		outs := [4]*systray.MenuItem{}
 		for i := range outs {
-			str := fmt.Sprintf("Output %d", i+1)
+			str := switcher.config.Section("").Key(fmt.Sprintf("output%d", i+1)).String()
 			outs[i] = mSelect.AddSubMenuItem(str, str)
-			outsChs[i] = outs[i].ClickedCh
 		}
-
-		titlesChs := [4](chan string){}
-		for i := range titlesChs {
-			titlesChs[i] = switcher.outputTitles[i].C
-		}
-
-		// Combined channel for all output menu items
-		outsGroup := utils.NewGroupE(outsChs)
-		titlesGroup := utils.NewGroupV(titlesChs)
 
 		// Add check icon to selected input
 		setChecks := func(item int) {
@@ -448,7 +487,8 @@ func (switcher *Switcher) setupTray() {
 		}
 
 		// Set initial icon
-		setChecks(switcher.output.V)
+		cur, _ := switcher.config.Section("").Key("current_output").Int()
+		setChecks(cur)
 
 		for {
 			select {
@@ -459,24 +499,29 @@ func (switcher *Switcher) setupTray() {
 					mMute.SetTitle("Mute")
 				}
 
-			case v := <-outsGroup:
-				switcher.sendUDP(v)
-				setChecks(v)
+			case <-outs[0].ClickedCh:
+				switcher.sendUDP(0)
+				setChecks(0)
+			case <-outs[1].ClickedCh:
+				switcher.sendUDP(1)
+				setChecks(1)
+			case <-outs[2].ClickedCh:
+				switcher.sendUDP(2)
+				setChecks(2)
+			case <-outs[3].ClickedCh:
+				switcher.sendUDP(3)
+				setChecks(3)
 
 			case v := <-switcher.output.C:
 				if v > -1 && v < 5 {
 					setChecks(v)
 				}
 
-			case v := <-titlesGroup:
-				outs[v.Index].SetTitle(v.Msg)
-
 			case <-mSettings.ClickedCh:
 				go switcher.openSettings()
 
 			case <-mQuit.ClickedCh:
 				systray.Quit()
-				fmt.Println("Closing...")
 				return
 			}
 		}
@@ -486,16 +531,22 @@ func (switcher *Switcher) setupTray() {
 }
 
 func (switcher *Switcher) exit() {
+	fmt.Println("Closing...")
+
+	switcher.config.SaveTo("config.ini")
 	switcher.UDP.Close()
+
 	os.Exit(0)
 }
 
 func main() {
 	client := &Switcher{}
+
+	client.setupSettings()
+	client.setupConfig()
+
 	client.connect()
 
-	client.setupMisc()
-	client.setupSettings()
 	client.setupTray()
 	client.setupHotkeys()
 }

@@ -5,6 +5,10 @@ import (
 	"log"
 	"os/exec"
 	"runtime"
+
+	"kyleschwartz/soundbrick/assets/icon"
+
+	"github.com/electricbubble/go-toast"
 )
 
 func OpenLink(url string) {
@@ -23,4 +27,14 @@ func OpenLink(url string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func Alert(title string, content string) {
+	go toast.Push(content,
+		toast.WithTitle(title),
+		toast.WithAppID("Sound Brick"),
+		toast.WithAudio(toast.Default),
+		toast.WithShortDuration(),
+		toast.WithIconRaw(icon.Data),
+	)
 }
