@@ -50,6 +50,7 @@ type Switcher struct {
 	ipAddr       StableChannelS
 	key          StableChannelS
 	config       *ini.File
+	channels     map[string]chan int
 }
 
 func (sc *StableChannelS) send(msg string) {
@@ -104,11 +105,6 @@ func (switcher *Switcher) connect() {
 	s, _ := net.ResolveUDPAddr("udp4", userIP)
 	c, err := net.DialUDP("udp4", nil, s)
 
-	// if err != nil {
-	// 	noConn()
-	// 	return
-	// }
-
 	if err != nil || userIP != c.RemoteAddr().String() {
 		noConn()
 		switcher.UDP = nil
@@ -123,13 +119,15 @@ func (switcher *Switcher) connect() {
 }
 
 func (switcher *Switcher) setupHotkeys() {
+	switcher.channels["hotkey"] = make(chan int)
+
 	mainthread.Init(func() {
 		wg := sync.WaitGroup{}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 
-			k, _ := strconv.Atoi(switcher.key.V)
+			k, _ := switcher.config.Section("").Key("hotkey").Int()
 			hk := hotkey.New([]hotkey.Modifier{}, hotkey.Key(k))
 
 			defer hk.Unregister()
@@ -142,8 +140,13 @@ func (switcher *Switcher) setupHotkeys() {
 			}
 
 			for {
-				<-hk.Keydown()
-				switcher.cycleOutput()
+				select {
+				case <-hk.Keydown():
+					switcher.cycleOutput()
+				case <-switcher.channels["hotkey"]:
+					defer switcher.setupHotkeys()
+					return
+				}
 			}
 		}()
 		wg.Wait()
@@ -220,8 +223,10 @@ func importConfig(switcher *Switcher) {
 }
 
 func (switcher *Switcher) setupConfig() {
+	switcher.channels = make(map[string]chan int)
 	switcher.output.C = make(chan int)
 	switcher.ipAddr.C = make(chan string)
+	switcher.key.C = make(chan string)
 
 	for i := range switcher.outputTitles {
 		if switcher.outputTitles[i].C == nil {
@@ -302,6 +307,8 @@ func (switcher *Switcher) openSettings() {
 				if switcher.UDP == nil || switcher.UDP.RemoteAddr().String() != ipAddr.Text() {
 					switcher.connect()
 				}
+
+				switcher.channels["hotkey"] <- 0
 
 				// Create new window when old one is destroyed
 				switcher.setupSettings()
