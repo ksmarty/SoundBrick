@@ -31,68 +31,32 @@ import (
 	"gioui.org/widget/material"
 )
 
-type StableChannelS struct {
-	C chan string
-	V string
-}
-
-type StableChannelI struct {
-	C chan int
-	V int
-}
-
 type Switcher struct {
-	UDP          *net.UDPConn
-	output       StableChannelI
-	prevOutput   int
-	settings     *app.Window
-	outputTitles [4]StableChannelS
-	ipAddr       StableChannelS
-	key          StableChannelS
-	config       *ini.File
-	channels     map[string]chan int
-}
-
-func (sc *StableChannelS) send(msg string) {
-	sc.V = msg
-	sc.C <- sc.V
-}
-func (sc *StableChannelI) send(msg int) {
-	sc.V = msg
-	sc.C <- sc.V
+	UDP        *net.UDPConn
+	prevOutput int
+	settings   *app.Window
+	config     *ini.File
+	updated    map[string]chan string
 }
 
 func (switcher *Switcher) cycleOutput() {
+	x, _ := switcher.config.Section("").Key("current_output").Int()
+
+	switcher.sendUDP((x + 1) % 4)
+}
+
+func (switcher *Switcher) muteToggle() {
 	if switcher.UDP == nil {
 		return
 	}
 
-	val, _ := switcher.config.Section("").Key("current_output").Int()
-	x := val
-	x++
-	x %= 4
-
-	switcher.sendUDP(x)
-}
-
-func (switcher *Switcher) muteToggle() bool {
-	var val int
 	cur, _ := switcher.config.Section("").Key("current_output").Int()
 
 	if cur != -1 {
 		switcher.prevOutput = cur
-		println(switcher.prevOutput)
-		val = -1
-		go switcher.output.send(val)
-		utils.Alert("Muted!", "Output has been muted.")
-	} else {
-		val = switcher.prevOutput
 	}
 
-	go switcher.output.send(val)
-	go switcher.sendUDP(val)
-
-	return val == -1
+	switcher.sendUDP(-1)
 }
 
 func (switcher *Switcher) connect() {
@@ -119,8 +83,6 @@ func (switcher *Switcher) connect() {
 }
 
 func (switcher *Switcher) setupHotkeys() {
-	switcher.channels["hotkey"] = make(chan int)
-
 	mainthread.Init(func() {
 		wg := sync.WaitGroup{}
 		wg.Add(1)
@@ -143,7 +105,7 @@ func (switcher *Switcher) setupHotkeys() {
 				select {
 				case <-hk.Keydown():
 					switcher.cycleOutput()
-				case <-switcher.channels["hotkey"]:
+				case <-switcher.updated["new_hotkey"]:
 					hk.Unregister()
 					fmt.Printf("Hotkey %v is unregistered\n", hk)
 					defer switcher.setupHotkeys()
@@ -155,9 +117,9 @@ func (switcher *Switcher) setupHotkeys() {
 	})
 }
 
-func (switcher *Switcher) sendUDP(command int) string {
+func (switcher *Switcher) sendUDP(command int) {
 	if switcher.UDP == nil {
-		return ""
+		return
 	}
 
 	fmt.Printf("Sending: %d\n", command)
@@ -166,7 +128,6 @@ func (switcher *Switcher) sendUDP(command int) string {
 
 	if err != nil {
 		fmt.Println(err)
-		return err.Error()
 	}
 
 	buffer := make([]byte, 512)
@@ -174,68 +135,79 @@ func (switcher *Switcher) sendUDP(command int) string {
 
 	if err != nil {
 		fmt.Println(err)
-		return err.Error()
 	}
 
-	switcher.output.send(command)
-	switcher.config.Section("").Key("current_output").SetValue(strconv.Itoa(command))
+	result := string(buffer[0:n])
 
-	if command > -1 && command < 5 {
+	if result != "Success!" {
+		utils.Alert("Oops!", "The system is currently muted. Please unmute to change outputs.")
+		return
+	}
+
+	if command > -1 && command < 4 {
 		utils.Alert(
 			"Output Changed!",
 			fmt.Sprintf("Current output: %s", switcher.config.Section("").Key(fmt.Sprintf("output%d", command+1)).String()),
 		)
+	} else if command == -1 {
+		utils.Alert("Muted!", "Output has been muted.")
+	} else {
+		utils.Alert("Error!", "That's not a valid command! How'd you do that??")
 	}
 
-	return string(buffer[0:n])
+	switcher.updated["current_output"] <- strconv.Itoa(command)
 }
 
 func importConfig(switcher *Switcher) {
 	go func() {
-		sec := switcher.config.Section("")
-
-		for i := 0; i < 4; i++ {
-			switcher.outputTitles[i].V = sec.Key(fmt.Sprintf("output%d", i+1)).String()
+		update := func(key string, value string) {
+			switcher.config.Section("").Key(key).SetValue(value)
+			switcher.updated["refresh_tray"] <- key
 		}
-		switcher.key.V = sec.Key("hotkey").String()
-		switcher.ipAddr.V = sec.Key("ip").String()
 
 		for {
 			select {
-			case v := <-switcher.outputTitles[0].C:
-				sec.Key("output1").SetValue(v)
-			case v := <-switcher.outputTitles[1].C:
-				sec.Key("output2").SetValue(v)
-			case v := <-switcher.outputTitles[2].C:
-				sec.Key("output3").SetValue(v)
-			case v := <-switcher.outputTitles[3].C:
-				sec.Key("output4").SetValue(v)
+			case v := <-switcher.updated["output1"]:
+				update("output1", v)
+			case v := <-switcher.updated["output2"]:
+				update("output2", v)
+			case v := <-switcher.updated["output3"]:
+				update("output3", v)
+			case v := <-switcher.updated["output4"]:
+				update("output4", v)
 
-			case v := <-switcher.ipAddr.C:
-				sec.Key("ip").SetValue(v)
+			case v := <-switcher.updated["ip"]:
+				update("ip", v)
 
-			case v := <-switcher.key.C:
-				sec.Key("hotkey").SetValue(v)
+			case v := <-switcher.updated["hotkey"]:
+				update("hotkey", v)
 
-				// case v := <-switcher.output.C:
-				// 	sec.Key("current_output").SetValue(strconv.Itoa(v))
+			case v := <-switcher.updated["current_output"]:
+				update("current_output", v)
 			}
 		}
 	}()
 }
 
 func (switcher *Switcher) setupConfig() {
-	switcher.channels = make(map[string]chan int)
-	switcher.output.C = make(chan int)
-	switcher.ipAddr.C = make(chan string)
-	switcher.key.C = make(chan string)
+	switcher.updated = make(map[string]chan string)
 
-	for i := range switcher.outputTitles {
-		if switcher.outputTitles[i].C == nil {
-			switcher.outputTitles[i].C = make(chan string)
-			switcher.outputTitles[i].V = (fmt.Sprintf("Output %d", i+1))
-		}
-	}
+	switcher.updated["output1"] = make(chan string)
+	switcher.updated["output2"] = make(chan string)
+	switcher.updated["output3"] = make(chan string)
+	switcher.updated["output4"] = make(chan string)
+
+	switcher.updated["ip"] = make(chan string)
+
+	switcher.updated["hotkey"] = make(chan string)
+
+	switcher.updated["new_hotkey"] = make(chan string)
+
+	switcher.updated["current_output"] = make(chan string)
+
+	switcher.updated["refresh_tray"] = make(chan string)
+
+	switcher.updated["mute"] = make(chan string)
 
 	configPath := "config.ini"
 
@@ -306,14 +278,16 @@ func (switcher *Switcher) openSettings() {
 					fmt.Println(err)
 				}
 
+				// Attempt UDP connection when IP changed
 				if switcher.UDP == nil || switcher.UDP.RemoteAddr().String() != ipAddr.Text() {
 					switcher.connect()
 				}
 
-				switcher.channels["hotkey"] <- 0
+				switcher.updated["new_hotkey"] <- ""
 
 				// Create new window when old one is destroyed
 				switcher.setupSettings()
+
 				return e.Err
 			case system.FrameEvent:
 
@@ -373,7 +347,7 @@ func (switcher *Switcher) openSettings() {
 					})
 				}
 
-				inputGen := func(we *widget.Editor, sc *StableChannelS, label string, widgets ...layout.FlexChild) layout.FlexChild {
+				inputGen := func(we *widget.Editor, conf *ini.Key, channel chan string, label string, widgets ...layout.FlexChild) layout.FlexChild {
 					return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						var borderColor color.NRGBA
 
@@ -407,12 +381,12 @@ func (switcher *Switcher) openSettings() {
 								content := we.Text()
 
 								// Only update when text has changed
-								if content != sc.V && content != "" {
-									sc.send(strings.TrimSpace(content))
+								if content != conf.String() && content != "" {
+									channel <- strings.TrimSpace(content)
 								}
 								// Set initial value
 								if content == "" && !we.Focused() {
-									we.SetText(sc.V)
+									we.SetText(conf.String())
 								}
 
 								return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -446,6 +420,8 @@ func (switcher *Switcher) openSettings() {
 					})
 				}
 
+				conf := switcher.config.Section("").Key
+
 				// Layout -------------------------------------------
 
 				layout.Flex{
@@ -458,20 +434,20 @@ func (switcher *Switcher) openSettings() {
 					spacer(10, "H"),
 
 					titleGen("Labels", material.H6),
-					inputGen(&outputNames[0], &switcher.outputTitles[0], "Output 1"),
-					inputGen(&outputNames[1], &switcher.outputTitles[1], "Output 2"),
-					inputGen(&outputNames[2], &switcher.outputTitles[2], "Output 3"),
-					inputGen(&outputNames[3], &switcher.outputTitles[3], "Output 4"),
+					inputGen(&outputNames[0], conf("output1"), switcher.updated["output1"], "Output 1"),
+					inputGen(&outputNames[1], conf("output2"), switcher.updated["output2"], "Output 2"),
+					inputGen(&outputNames[2], conf("output3"), switcher.updated["output3"], "Output 3"),
+					inputGen(&outputNames[3], conf("output4"), switcher.updated["output4"], "Output 4"),
 
 					spacer(20, "H"),
 
 					titleGen("Connection", material.H6),
-					inputGen(&ipAddr, &switcher.ipAddr, "IP Address"),
+					inputGen(&ipAddr, conf("ip"), switcher.updated["ip"], "IP Address"),
 
 					spacer(20, "H"),
 
 					titleGen("Controls", material.H6),
-					inputGen(&key, &switcher.key, "Hotkey",
+					inputGen(&key, conf("hotkey"), switcher.updated["hotkey"], "Hotkey",
 						spacer(5, "W"),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							btn := material.Button(th, &keyButton, "Find keycodes")
@@ -523,21 +499,26 @@ func (switcher *Switcher) setupTray() {
 			outs[item].SetIcon(check.Data)
 		}
 
+		key := switcher.config.Section("").Key
+
 		// Set initial icon
-		cur, _ := switcher.config.Section("").Key("current_output").Int()
-		setChecks(cur)
+		cur := func() int {
+			x, err := key("current_output").Int()
+
+			if err != nil {
+				fmt.Println(err.Error())
+				return 5
+			}
+
+			return x
+		}
+
+		setChecks(cur())
 
 		for {
 			select {
 			case <-mMute.ClickedCh:
-				if switcher.UDP == nil {
-					return
-				}
-				if switcher.muteToggle() {
-					mMute.SetTitle("Unmute")
-				} else {
-					mMute.SetTitle("Mute")
-				}
+				switcher.muteToggle()
 
 			case <-outs[0].ClickedCh:
 				switcher.sendUDP(0)
@@ -552,17 +533,31 @@ func (switcher *Switcher) setupTray() {
 				switcher.sendUDP(3)
 				setChecks(3)
 
-			case v := <-switcher.output.C:
-				if v > -1 && v < 5 {
-					setChecks(v)
-				}
-
 			case <-mSettings.ClickedCh:
 				go switcher.openSettings()
 
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 				return
+
+			case v := <-switcher.updated["refresh_tray"]:
+				switch v {
+				case "output1":
+					outs[0].SetTitle(key(v).String())
+				case "output2":
+					outs[1].SetTitle(key(v).String())
+				case "output3":
+					outs[2].SetTitle(key(v).String())
+				case "output4":
+					outs[3].SetTitle(key(v).String())
+				case "current_output":
+					if cur() != -1 {
+						setChecks(cur())
+						mMute.SetTitle("Mute")
+					} else {
+						mMute.SetTitle("Unmute")
+					}
+				}
 			}
 		}
 	}, func() {
