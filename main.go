@@ -125,7 +125,7 @@ func (switcher *Switcher) sendUDP(command int) {
 		return
 	}
 
-	fmt.Printf("Sending: %d\n", command)
+	fmt.Printf("Sending packet: %d\n", command)
 
 	_, err := switcher.UDP.Write([]byte(strconv.Itoa(command)))
 
@@ -140,9 +140,9 @@ func (switcher *Switcher) sendUDP(command int) {
 		fmt.Println(err)
 	}
 
-	result := string(buffer[0:n])
+	result, _ := strconv.Atoi(string(buffer[0:n]))
 
-	if result != "Success!" {
+	if result == -1 {
 		utils.Alert("Oops!", "The system is currently muted. Please unmute to change outputs.")
 		return
 	}
