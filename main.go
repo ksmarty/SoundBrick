@@ -41,6 +41,9 @@ type Switcher struct {
 
 func (switcher *Switcher) cycleOutput() {
 	x, _ := switcher.config.Section("").Key("current_output").Int()
+	if x == 4 {
+		x = switcher.prevOutput
+	}
 
 	switcher.sendUDP((x + 1) % 4)
 }
@@ -52,11 +55,11 @@ func (switcher *Switcher) muteToggle() {
 
 	cur, _ := switcher.config.Section("").Key("current_output").Int()
 
-	if cur != -1 {
+	if cur != 4 {
 		switcher.prevOutput = cur
 	}
 
-	switcher.sendUDP(-1)
+	switcher.sendUDP(4)
 }
 
 func (switcher *Switcher) connect() {
@@ -144,17 +147,6 @@ func (switcher *Switcher) sendUDP(command int) {
 		return
 	}
 
-	if command > -1 && command < 4 {
-		utils.Alert(
-			"Output Changed!",
-			fmt.Sprintf("Current output: %s", switcher.config.Section("").Key(fmt.Sprintf("output%d", command+1)).String()),
-		)
-	} else if command == -1 {
-		utils.Alert("Muted!", "Output has been muted.")
-	} else {
-		utils.Alert("Error!", "That's not a valid command! How'd you do that??")
-	}
-
 	switcher.updated["current_output"] <- strconv.Itoa(command)
 }
 
@@ -163,6 +155,26 @@ func importConfig(switcher *Switcher) {
 		update := func(key string, value string) {
 			switcher.config.Section("").Key(key).SetValue(value)
 			switcher.updated["refresh_tray"] <- key
+		}
+
+		notif := func(command string) {
+			value, _ := strconv.Atoi(command)
+
+			if value > -1 && value < 4 {
+				utils.Alert(
+					"Output Changed!",
+					fmt.Sprintf("Current output: %s", switcher.config.Section("").Key(fmt.Sprintf("output%d", value+1)).String()),
+				)
+			} else if value == 4 {
+				x, _ := switcher.config.Section("").Key("current_output").Int()
+				if x != 4 {
+					utils.Alert("Muted!", "Output has been muted.")
+				} else {
+					utils.Alert("Unmuted!", "Output has been unmuted.")
+				}
+			} else {
+				utils.Alert("Error!", "That's not a valid command! How'd you do that??")
+			}
 		}
 
 		for {
@@ -183,6 +195,7 @@ func importConfig(switcher *Switcher) {
 				update("hotkey", v)
 
 			case v := <-switcher.updated["current_output"]:
+				notif(v)
 				update("current_output", v)
 			}
 		}
@@ -551,7 +564,7 @@ func (switcher *Switcher) setupTray() {
 				case "output4":
 					outs[3].SetTitle(key(v).String())
 				case "current_output":
-					if cur() != -1 {
+					if cur() != 4 {
 						setChecks(cur())
 						mMute.SetTitle("Mute")
 					} else {
