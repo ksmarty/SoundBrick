@@ -144,6 +144,8 @@ func (switcher *Switcher) setupHotkeys() {
 				case <-hk.Keydown():
 					switcher.cycleOutput()
 				case <-switcher.channels["hotkey"]:
+					hk.Unregister()
+					fmt.Printf("Hotkey %v is unregistered\n", hk)
 					defer switcher.setupHotkeys()
 					return
 				}
@@ -181,7 +183,7 @@ func (switcher *Switcher) sendUDP(command int) string {
 	if command > -1 && command < 5 {
 		utils.Alert(
 			"Output Changed!",
-			fmt.Sprintf("Current output: %s", switcher.outputTitles[command].V),
+			fmt.Sprintf("Current output: %s", switcher.config.Section("").Key(fmt.Sprintf("output%d", command+1)).String()),
 		)
 	}
 
