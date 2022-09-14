@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/getlantern/systray"
@@ -61,6 +62,10 @@ func (sc *StableChannelI) send(msg int) {
 }
 
 func (switcher *Switcher) cycleOutput() {
+	if switcher.UDP == nil {
+		return
+	}
+
 	val, _ := switcher.config.Section("").Key("current_output").Int()
 	x := val
 	x++
@@ -90,15 +95,29 @@ func (switcher *Switcher) muteToggle() bool {
 }
 
 func (switcher *Switcher) connect() {
-	s, _ := net.ResolveUDPAddr("udp4", switcher.config.Section("").Key("ip").String())
+	noConn := func() {
+		utils.Alert("Error!", "Could not connect to device! Please change IP in settings.")
+	}
+
+	userIP := switcher.config.Section("").Key("ip").String()
+
+	s, _ := net.ResolveUDPAddr("udp4", userIP)
 	c, err := net.DialUDP("udp4", nil, s)
 
-	if err != nil {
-		fmt.Println(err)
+	// if err != nil {
+	// 	noConn()
+	// 	return
+	// }
+
+	if err != nil || userIP != c.RemoteAddr().String() {
+		noConn()
+		switcher.UDP = nil
 		return
 	}
 
 	fmt.Printf("The UDP server is %s\n", c.RemoteAddr().String())
+
+	utils.Alert("Connected!", "Successfully connected to device!")
 
 	switcher.UDP = c
 }
@@ -132,6 +151,10 @@ func (switcher *Switcher) setupHotkeys() {
 }
 
 func (switcher *Switcher) sendUDP(command int) string {
+	if switcher.UDP == nil {
+		return ""
+	}
+
 	fmt.Printf("Sending: %d\n", command)
 
 	_, err := switcher.UDP.Write([]byte(strconv.Itoa(command)))
@@ -198,6 +221,7 @@ func importConfig(switcher *Switcher) {
 
 func (switcher *Switcher) setupConfig() {
 	switcher.output.C = make(chan int)
+	switcher.ipAddr.C = make(chan string)
 
 	for i := range switcher.outputTitles {
 		if switcher.outputTitles[i].C == nil {
@@ -273,6 +297,10 @@ func (switcher *Switcher) openSettings() {
 				err := switcher.config.SaveTo("config.ini")
 				if err != nil {
 					fmt.Println(err)
+				}
+
+				if switcher.UDP == nil || switcher.UDP.RemoteAddr().String() != ipAddr.Text() {
+					switcher.connect()
 				}
 
 				// Create new window when old one is destroyed
@@ -371,7 +399,7 @@ func (switcher *Switcher) openSettings() {
 
 								// Only update when text has changed
 								if content != sc.V && content != "" {
-									sc.send(content)
+									sc.send(strings.TrimSpace(content))
 								}
 								// Set initial value
 								if content == "" && !we.Focused() {
@@ -493,6 +521,9 @@ func (switcher *Switcher) setupTray() {
 		for {
 			select {
 			case <-mMute.ClickedCh:
+				if switcher.UDP == nil {
+					return
+				}
 				if switcher.muteToggle() {
 					mMute.SetTitle("Unmute")
 				} else {
@@ -534,7 +565,9 @@ func (switcher *Switcher) exit() {
 	fmt.Println("Closing...")
 
 	switcher.config.SaveTo("config.ini")
-	switcher.UDP.Close()
+	if switcher.UDP != nil {
+		switcher.UDP.Close()
+	}
 
 	os.Exit(0)
 }
