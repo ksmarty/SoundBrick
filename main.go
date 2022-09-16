@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"image/color"
 	"net"
@@ -65,6 +64,8 @@ func (switcher *Switcher) muteToggle() {
 func (switcher *Switcher) connect() {
 	noConn := func() {
 		utils.Alert("Error!", "Could not connect to device! Please change IP in settings.")
+		switcher.UDP = nil
+		// return
 	}
 
 	userIP := switcher.config.Section("").Key("ip").String()
@@ -74,8 +75,6 @@ func (switcher *Switcher) connect() {
 
 	if err != nil || userIP != c.RemoteAddr().String() {
 		noConn()
-		switcher.UDP = nil
-		return
 	}
 
 	fmt.Printf("The UDP server is %s\n", c.RemoteAddr().String())
@@ -150,6 +149,11 @@ func (switcher *Switcher) sendUDP(command int) {
 	switcher.updated["current_output"] <- strconv.Itoa(command)
 }
 
+func (switcher *Switcher) save() error {
+	dir, _ := os.UserConfigDir()
+	return switcher.config.SaveTo(fmt.Sprintf("%s/soundbrick/config.ini", dir))
+}
+
 func importConfig(switcher *Switcher) {
 	go func() {
 		update := func(key string, value string) {
@@ -222,21 +226,9 @@ func (switcher *Switcher) setupConfig() {
 
 	switcher.updated["mute"] = make(chan string)
 
-	configPath := "config.ini"
+	cfg := utils.Load()
 
-	// Check if config exists, if not create it
-	if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
-		os.Create(configPath)
-	}
-
-	cfg, err := ini.InsensitiveLoad(configPath)
-
-	if err != nil {
-		fmt.Printf("Error: %s", err.Error())
-		return
-	}
-
-	sec := cfg.Section("")
+	sec, _ := cfg.GetSection("")
 
 	// Keys and their default values
 	keys := map[string]string{
@@ -286,7 +278,7 @@ func (switcher *Switcher) openSettings() {
 			switch e := e.(type) {
 			case system.DestroyEvent:
 				// Save settings on close
-				err := switcher.config.SaveTo("config.ini")
+				err := switcher.save()
 				if err != nil {
 					fmt.Println(err)
 				}
