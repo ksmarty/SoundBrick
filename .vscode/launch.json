@@ -5,7 +5,15 @@
 	"version": "0.2.0",
 	"configurations": [
 		{
-			"name": "Launch",
+			"name": "Dev",
+			"type": "go",
+			"request": "launch",
+			"mode": "auto",
+			"program": "main.go",
+			"args": ["-D"]
+		},
+		{
+			"name": "Prod",
 			"type": "go",
 			"request": "launch",
 			"mode": "auto",

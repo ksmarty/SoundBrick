@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/getlantern/systray"
 	"golang.design/x/hotkey"
@@ -61,27 +62,46 @@ func (switcher *Switcher) muteToggle() {
 	switcher.sendUDP(4)
 }
 
-func (switcher *Switcher) connect() {
-	noConn := func() {
-		utils.Alert("Error!", "Could not connect to device! Please change IP in settings.")
-		switcher.UDP = nil
-		// return
-	}
+func (switcher *Switcher) noConn() {
+	utils.Alert("Error!", "Could not connect to device! Please change IP in settings.")
+	switcher.UDP = nil
+}
 
-	userIP := switcher.config.Section("").Key("ip").String()
+func (switcher *Switcher) connect() {
+	sec := switcher.config.Section("")
+
+	userIP := sec.Key("ip").String()
 
 	s, _ := net.ResolveUDPAddr("udp4", userIP)
 	c, err := net.DialUDP("udp4", nil, s)
 
 	if err != nil || userIP != c.RemoteAddr().String() {
-		noConn()
+		switcher.noConn()
+		return
 	}
 
-	fmt.Printf("The UDP server is %s\n", c.RemoteAddr().String())
-
-	utils.Alert("Connected!", "Successfully connected to device!")
-
 	switcher.UDP = c
+
+	// Test connection
+	x, err := sec.Key("current_output").Int()
+	// If current is mute, request current output
+	if err != nil || x == 4 {
+		x = -2
+	}
+
+	switcher.sendUDP(x)
+
+	if userIP != c.RemoteAddr().String() {
+		switcher.noConn()
+		return
+	}
+
+	if switcher.UDP != nil {
+		fmt.Printf("The UDP server is %s\n", c.RemoteAddr().String())
+
+		utils.Alert("Connected!", "Successfully connected to device!")
+	}
+
 }
 
 func (switcher *Switcher) setupHotkeys() {
@@ -132,21 +152,28 @@ func (switcher *Switcher) sendUDP(command int) {
 		fmt.Println(err)
 	}
 
+	timeout, _ := time.ParseDuration("3s")
+	switcher.UDP.SetReadDeadline(time.Now().Add(timeout))
+
 	buffer := make([]byte, 512)
 	n, _, err := switcher.UDP.ReadFromUDP(buffer)
 
 	if err != nil {
-		fmt.Println(err)
+		println(err.Error())
+		switcher.noConn()
+		return
 	}
 
 	result, _ := strconv.Atoi(string(buffer[0:n]))
+
+	println(result)
 
 	if result == -1 {
 		utils.Alert("Oops!", "The system is currently muted. Please unmute to change outputs.")
 		return
 	}
 
-	switcher.updated["current_output"] <- strconv.Itoa(command)
+	switcher.updated["current_output"] <- strconv.Itoa(result)
 }
 
 func (switcher *Switcher) save() error {
@@ -170,12 +197,9 @@ func importConfig(switcher *Switcher) {
 					fmt.Sprintf("Current output: %s", switcher.config.Section("").Key(fmt.Sprintf("output%d", value+1)).String()),
 				)
 			} else if value == 4 {
-				x, _ := switcher.config.Section("").Key("current_output").Int()
-				if x != 4 {
-					utils.Alert("Muted!", "Output has been muted.")
-				} else {
-					utils.Alert("Unmuted!", "Output has been unmuted.")
-				}
+				utils.Alert("Muted!", "Output has been muted.")
+			} else if value == -2 {
+				// Request current
 			} else {
 				utils.Alert("Error!", "That's not a valid command! How'd you do that??")
 			}
@@ -199,8 +223,8 @@ func importConfig(switcher *Switcher) {
 				update("hotkey", v)
 
 			case v := <-switcher.updated["current_output"]:
-				notif(v)
 				update("current_output", v)
+				notif(v)
 			}
 		}
 	}()
@@ -254,12 +278,10 @@ func (switcher *Switcher) setupConfig() {
 
 func (switcher *Switcher) setupSettings() {
 	go func() {
-		w := app.NewWindow(
+		switcher.settings = app.NewWindow(
 			app.Title("Sound Brick"),
 			app.Size(unit.Dp(400), unit.Dp(435)),
 		)
-
-		switcher.settings = w
 	}()
 }
 
@@ -488,6 +510,7 @@ func (switcher *Switcher) setupTray() {
 		mSelect := systray.AddMenuItem("Select Output", "Select output")
 		mMute := systray.AddMenuItem("Mute", "Mute devices")
 		mSettings := systray.AddMenuItem("Settings", "Open settings")
+		mReload := systray.AddMenuItem("Reload Connection", "Reload connection")
 		mQuit := systray.AddMenuItem("Quit", "Quit")
 
 		outs := [4]*systray.MenuItem{}
@@ -501,7 +524,9 @@ func (switcher *Switcher) setupTray() {
 			for _, v := range outs {
 				v.SetIcon(blank.Data)
 			}
-			outs[item].SetIcon(check.Data)
+			if item > -1 && item < 4 {
+				outs[item].SetIcon(check.Data)
+			}
 		}
 
 		key := switcher.config.Section("").Key
@@ -521,6 +546,7 @@ func (switcher *Switcher) setupTray() {
 		setChecks(cur())
 
 		for {
+
 			select {
 			case <-mMute.ClickedCh:
 				switcher.muteToggle()
@@ -540,6 +566,9 @@ func (switcher *Switcher) setupTray() {
 
 			case <-mSettings.ClickedCh:
 				go switcher.openSettings()
+
+			case <-mReload.ClickedCh:
+				switcher.connect()
 
 			case <-mQuit.ClickedCh:
 				systray.Quit()
@@ -573,7 +602,7 @@ func (switcher *Switcher) setupTray() {
 func (switcher *Switcher) exit() {
 	fmt.Println("Closing...")
 
-	switcher.config.SaveTo("config.ini")
+	switcher.save()
 	if switcher.UDP != nil {
 		switcher.UDP.Close()
 	}
@@ -582,6 +611,8 @@ func (switcher *Switcher) exit() {
 }
 
 func main() {
+	utils.SetupFlags()
+
 	client := &Switcher{}
 
 	client.setupSettings()

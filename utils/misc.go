@@ -34,13 +34,15 @@ func OpenLink(url string) {
 }
 
 func Alert(title string, content string) {
-	go toast.Push(content,
-		toast.WithTitle(title),
-		toast.WithAppID("Sound Brick"),
-		toast.WithAudio(toast.Default),
-		toast.WithShortDuration(),
-		toast.WithIconRaw(icon.Data),
-	)
+	Prod(func() {
+		go toast.Push(content,
+			toast.WithTitle(title),
+			toast.WithAppID("Sound Brick"),
+			toast.WithAudio(toast.Default),
+			toast.WithShortDuration(),
+			toast.WithIconRaw(icon.Data),
+		)
+	})
 }
 
 func Load() *ini.File {

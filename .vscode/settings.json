@@ -6,5 +6,13 @@
 	"ShortcutMenuBar.beautify": false,
 	"ShortcutMenuBar.userButton01Command": "workbench.action.tasks.runTask|Run",
 	"ShortcutMenuBar.userButton02Command": "workbench.action.tasks.runTask|Build",
-	"svg.preview.background": "dark-transparent"
+	"svg.preview.background": "dark-transparent",
+	"emeraldwalk.runonsave": {
+		"commands": [
+			{
+				"match": "\\.go$",
+				"cmd": "golines ${file} -w"
+			}
+		]
+	}
 }
