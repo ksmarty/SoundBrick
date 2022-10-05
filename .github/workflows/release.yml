@@ -2,8 +2,6 @@ name: release
 
 on:
     push:
-        tags:
-            - "*"
 
 jobs:
     release-windows-amd64:
@@ -16,4 +14,4 @@ jobs:
                   github_token: ${{ secrets.GITHUB_TOKEN }}
                   goos: windows
                   goarch: amd64
-                  ldflags: windowsgui
+                  ldflags: -H=windowsgui
