@@ -152,7 +152,7 @@ func (switcher *Switcher) sendUDP(command int) {
 		fmt.Println(err)
 	}
 
-	timeout, _ := time.ParseDuration("3s")
+	timeout, _ := time.ParseDuration("1s")
 	switcher.UDP.SetReadDeadline(time.Now().Add(timeout))
 
 	buffer := make([]byte, 512)
