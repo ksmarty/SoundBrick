@@ -4,6 +4,13 @@
 
 By default, the hotkey is `\`. This can be changed in the settings.
 
+## Features
+
+-   [x] Hotkey toggle
+-   [x] Renamable outputs
+-   [ ] Disable inputs
+-   [ ] Optional alert sound on switch
+
 ## Build
 
 ```sh

@@ -47,13 +47,19 @@ func Alert(title string, content string) {
 
 func Load() *ini.File {
 	dir, _ := os.UserConfigDir()
-	configPath := filepath.Clean(fmt.Sprintf("%s/SoundBrick", dir))
-	configFile := filepath.Clean(fmt.Sprintf("%s/config.ini", configPath))
+	var configFile string
 
-	// Check if config exists, if not create it
-	if _, err := os.Stat(configFile); errors.Is(err, os.ErrNotExist) {
-		os.MkdirAll(configPath, 0644)
-		os.Create(configFile)
+	if IsDev() {
+		configFile = "./config.ini"
+	} else {
+		configPath := filepath.Clean(fmt.Sprintf("%s/SoundBrick", dir))
+		configFile = filepath.Clean(fmt.Sprintf("%s/config.ini", configPath))
+
+		// Check if config exists, if not create it
+		if _, err := os.Stat(configFile); errors.Is(err, os.ErrNotExist) {
+			os.MkdirAll(configPath, 0644)
+			os.Create(configFile)
+		}
 	}
 
 	file, _ := ini.InsensitiveLoad(configFile)

@@ -13,14 +13,18 @@ func SetupFlags() {
 	Dev(func() { println("Dev!") })
 }
 
+func IsDev() bool {
+	return isDev || isDevShort
+}
+
 func Dev(fn func()) {
-	if isDev || isDevShort {
+	if IsDev() {
 		checkFn(fn)
 	}
 }
 
 func Prod(fn func()) {
-	if !(isDev || isDevShort) {
+	if !IsDev() {
 		checkFn(fn)
 	}
 }

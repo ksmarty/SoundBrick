@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"image/color"
 	"net"
 	"os"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 	"github.com/getlantern/systray"
 	"golang.design/x/hotkey"
 	"golang.design/x/hotkey/mainthread"
+	"golang.org/x/exp/slices"
 	"gopkg.in/ini.v1"
 
 	"kyleschwartz/soundbrick/assets/blank"
@@ -20,32 +20,37 @@ import (
 	"kyleschwartz/soundbrick/assets/icon"
 	"kyleschwartz/soundbrick/utils"
 
-	"gioui.org/app"
-	"gioui.org/font/gofont"
-	"gioui.org/io/system"
-	"gioui.org/layout"
-	"gioui.org/op"
-	"gioui.org/op/paint"
-	"gioui.org/unit"
-	"gioui.org/widget"
-	"gioui.org/widget/material"
+	"github.com/gen2brain/iup-go/iup"
 )
 
 type Switcher struct {
 	UDP        *net.UDPConn
 	prevOutput int
-	settings   *app.Window
 	config     *ini.File
 	updated    map[string]chan string
 }
 
 func (switcher *Switcher) cycleOutput() {
-	x, _ := switcher.config.Section("").Key("current_output").Int()
+	conf := switcher.config.Section("").Key
+	enabled := conf("enabled").Strings(",")
+
+	// Do nothing if all inputs are disabled
+	if !slices.Contains(enabled, "ON") {
+		return
+	}
+
+	x, _ := conf("current_output").Int()
+
 	if x == 4 {
 		x = switcher.prevOutput
 	}
 
-	switcher.sendUDP((x + 1) % 4)
+	// Find next available input
+	for do := true; do; do = (enabled[x] != "ON") {
+		x = (x + 1) % 4
+	}
+
+	switcher.sendUDP(x)
 }
 
 func (switcher *Switcher) muteToggle() {
@@ -178,7 +183,11 @@ func (switcher *Switcher) sendUDP(command int) {
 
 func (switcher *Switcher) save() error {
 	dir, _ := os.UserConfigDir()
-	return switcher.config.SaveTo(fmt.Sprintf("%s/soundbrick/config.ini", dir))
+	if utils.IsDev() {
+		return switcher.config.SaveTo("./config.ini")
+	} else {
+		return switcher.config.SaveTo(fmt.Sprintf("%s/soundbrick/config.ini", dir))
+	}
 }
 
 func importConfig(switcher *Switcher) {
@@ -215,6 +224,8 @@ func importConfig(switcher *Switcher) {
 				update("output3", v)
 			case v := <-switcher.updated["output4"]:
 				update("output4", v)
+			case v := <-switcher.updated["enabled"]:
+				update("enabled", v)
 
 			case v := <-switcher.updated["ip"]:
 				update("ip", v)
@@ -237,6 +248,7 @@ func (switcher *Switcher) setupConfig() {
 	switcher.updated["output2"] = make(chan string)
 	switcher.updated["output3"] = make(chan string)
 	switcher.updated["output4"] = make(chan string)
+	switcher.updated["enabled"] = make(chan string)
 
 	switcher.updated["ip"] = make(chan string)
 
@@ -260,6 +272,7 @@ func (switcher *Switcher) setupConfig() {
 		"output2":        "Output 2",
 		"output3":        "Output 3",
 		"output4":        "Output 4",
+		"enabled":        "ON, ON, ON, ON",
 		"current_output": "0",
 		"ip":             "",
 		"hotkey":         "220",
@@ -276,225 +289,137 @@ func (switcher *Switcher) setupConfig() {
 	importConfig(switcher)
 }
 
-func (switcher *Switcher) setupSettings() {
-	go func() {
-		switcher.settings = app.NewWindow(
-			app.Title("Sound Brick"),
-			app.Size(unit.Dp(400), unit.Dp(435)),
-		)
-	}()
-}
-
 func (switcher *Switcher) openSettings() {
-	err := func() error {
-		th := material.NewTheme(gofont.Collection())
+	iup.Open()
+	defer iup.Close()
 
-		var ops op.Ops
+	const (
+		LABEL = iota
+		CONNECTION
+		CONTROL
+	)
 
-		outputNames := [4]widget.Editor{}
-		ipAddr := widget.Editor{}
-		key := widget.Editor{}
-		keyButton := widget.Clickable{}
+	conf := switcher.config.Section("").Key
 
-		for e := range switcher.settings.Events() {
-			switch e := e.(type) {
-			case system.DestroyEvent:
-				// Save settings on close
-				err := switcher.save()
-				if err != nil {
-					fmt.Println(err)
-				}
+	darkTheme := iup.User().SetAttributes(`BGCOLOR="#282a36", FGCOLOR="#f8f8f2"`)
+	iup.SetHandle("darkTheme", darkTheme)
+	iup.SetGlobal("DEFAULTTHEME", "darkTheme")
 
-				// Attempt UDP connection when IP changed
-				if switcher.UDP == nil || switcher.UDP.RemoteAddr().String() != ipAddr.Text() {
-					switcher.connect()
-				}
+	inputAction := func(ih iup.Ihandle) int {
+		Type, _ := strconv.Atoi(ih.GetAttribute("TYPE"))
+		value := ih.GetAttribute("VALUE")
+		switcher.updated[ih.GetAttribute("TITLE")] <- strings.TrimSpace(value)
 
-				switcher.updated["new_hotkey"] <- ""
-
-				// Create new window when old one is destroyed
-				switcher.setupSettings()
-
-				return e.Err
-			case system.FrameEvent:
-
-				// Layout Context
-				gtx := layout.NewContext(&ops, e)
-
-				Colors := struct {
-					bg        color.NRGBA
-					focused   color.NRGBA
-					unfocused color.NRGBA
-					primary   color.NRGBA
-					secondary color.NRGBA
-					tertiary  color.NRGBA
-					hint      color.NRGBA
-				}{
-					bg:        color.NRGBA{0x16, 0x16, 0x1a, 0xff},
-					focused:   color.NRGBA{0x7f, 0x5a, 0xf0, 0xff},
-					unfocused: color.NRGBA{0x01, 0x01, 0x01, 0xff},
-					primary:   color.NRGBA{0xff, 0xff, 0xfe, 0xff},
-					secondary: color.NRGBA{0x94, 0xa1, 0xb2, 0xff},
-					tertiary:  color.NRGBA{0x2c, 0xb6, 0x7d, 0xff},
-					hint:      color.NRGBA{0xa7, 0xa9, 0xbe, 0x30},
-				}
-
-				// Background ---------------------------------------
-
-				paint.Fill(&ops, Colors.bg)
-
-				// Events -------------------------------------------
-
-				if keyButton.Clicked() {
-					utils.OpenLink("https://www.toptal.com/developers/keycode")
-				}
-
-				// Generators ---------------------------------------
-
-				spacer := func(size int, hw string) layout.FlexChild {
-					var x layout.Spacer
-					if hw == "H" {
-						x.Height = unit.Dp(size)
-					} else {
-						x.Width = unit.Dp(size)
-					}
-					return layout.Rigid(x.Layout)
-				}
-
-				margins := layout.Inset{
-					Top:    unit.Dp(5),
-					Bottom: unit.Dp(5),
-					Right:  unit.Dp(7),
-					Left:   unit.Dp(7),
-				}
-
-				marginLayout := func(content layout.Widget) layout.FlexChild {
-					return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return margins.Layout(gtx, content)
-					})
-				}
-
-				inputGen := func(we *widget.Editor, conf *ini.Key, channel chan string, label string, widgets ...layout.FlexChild) layout.FlexChild {
-					return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						var borderColor color.NRGBA
-
-						if we.Focused() {
-							borderColor = Colors.focused
-						} else {
-							borderColor = Colors.unfocused
-						}
-
-						border := widget.Border{
-							Color:        borderColor,
-							CornerRadius: unit.Dp(3),
-							Width:        unit.Dp(2),
-						}
-
-						elems := []layout.FlexChild{
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								title := material.H6(th, label)
-								title.Color = Colors.secondary
-								return title.Layout(gtx)
-							}),
-
-							spacer(5, "W"),
-
-							layout.Flexed(100, func(gtx layout.Context) layout.Dimensions {
-								ed := material.Editor(th, we, label)
-								ed.Color = Colors.secondary
-								ed.HintColor = Colors.hint
-								we.SingleLine = true
-
-								content := we.Text()
-
-								// Only update when text has changed
-								if content != conf.String() && content != "" {
-									channel <- strings.TrimSpace(content)
-								}
-								// Set initial value
-								if content == "" && !we.Focused() {
-									we.SetText(conf.String())
-								}
-
-								return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									return margins.Layout(gtx, ed.Layout)
-								})
-							}),
-						}
-
-						combined := append(elems, widgets...)
-
-						return margins.Layout(gtx,
-							func(gtx layout.Context) layout.Dimensions {
-								return layout.Flex{
-									Axis:      layout.Horizontal,
-									Spacing:   layout.SpaceEnd,
-									Alignment: layout.Middle,
-									WeightSum: 0,
-								}.Layout(gtx,
-									combined...,
-								)
-							},
-						)
-					})
-				}
-
-				titleGen := func(label string, size func(th *material.Theme, txt string) material.LabelStyle) layout.FlexChild {
-					return marginLayout(func(gtx layout.Context) layout.Dimensions {
-						title := size(th, label)
-						title.Color = Colors.primary
-						return title.Layout(gtx)
-					})
-				}
-
-				conf := switcher.config.Section("").Key
-
-				// Layout -------------------------------------------
-
-				layout.Flex{
-					Axis:    layout.Vertical,
-					Spacing: layout.SpaceEnd,
-				}.Layout(gtx,
-
-					titleGen("Sound Brick", material.H4),
-
-					spacer(10, "H"),
-
-					titleGen("Labels", material.H6),
-					inputGen(&outputNames[0], conf("output1"), switcher.updated["output1"], "Output 1"),
-					inputGen(&outputNames[1], conf("output2"), switcher.updated["output2"], "Output 2"),
-					inputGen(&outputNames[2], conf("output3"), switcher.updated["output3"], "Output 3"),
-					inputGen(&outputNames[3], conf("output4"), switcher.updated["output4"], "Output 4"),
-
-					spacer(20, "H"),
-
-					titleGen("Connection", material.H6),
-					inputGen(&ipAddr, conf("ip"), switcher.updated["ip"], "IP Address"),
-
-					spacer(20, "H"),
-
-					titleGen("Controls", material.H6),
-					inputGen(&key, conf("hotkey"), switcher.updated["hotkey"], "Hotkey",
-						spacer(5, "W"),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							btn := material.Button(th, &keyButton, "Find keycodes")
-							btn.Background = Colors.tertiary
-							btn.Inset = margins
-
-							return btn.Layout(gtx)
-						}),
-					),
-				)
-
-				e.Frame(gtx.Ops)
-			}
+		if Type == CONNECTION && value != conf("ip").String() {
+			go switcher.connect()
+		} else if Type == CONTROL && value != conf("hotkey").String() {
+			switcher.updated["new_hotkey"] <- ""
 		}
-		return nil
-	}()
 
-	if err != nil {
-		fmt.Println(err)
+		return iup.DEFAULT
 	}
+
+	enabledAction := func(ih iup.Ihandle, state int) int {
+		// Update state
+		index, _ := strconv.Atoi(ih.GetAttribute("INDEX"))
+		arr := conf("enabled").Strings(",")
+		arr[index] = []string{"OFF", "ON"}[state]
+		switcher.updated["enabled"] <- strings.Join(arr, ", ")
+
+		// Change colour
+		label := iup.GetHandle(fmt.Sprintf("enabled%d", index))
+		label.SetAttribute("FGCOLOR", []string{"#ffb86c", "#50fa7b"}[state])
+		label.SetAttribute("TITLE", []string{"Disabled", "Enabled"}[state])
+
+		return iup.DEFAULT
+	}
+
+	inputGen := func(label string, Type int, confKey string) iup.Ihandle {
+		input := iup.Text()
+		input.SetAttributes(`CANFOCUS=NO, EXPAND="HORIZONTAL", PADDING=3, FGCOLOR="#D8D8D8"`)
+		input.SetAttribute("TITLE", confKey)
+		input.SetAttribute("TYPE", Type)
+		input.SetAttribute("VALUE", conf(confKey).String())
+		input.SetCallback("KILLFOCUS_CB", iup.KillFocusFunc(inputAction))
+
+		var custom iup.Ihandle
+
+		switch Type {
+		case LABEL:
+			index, _ := strconv.Atoi(label[len(label)-1:])
+			index--
+			isEnabled := conf("enabled").Strings(",")[index]
+
+			toggle := iup.Toggle("").SetAttribute("VALUE", isEnabled)
+			toggle.SetAttribute("INDEX", index)
+			toggle.SetCallback("ACTION", iup.ToggleActionFunc(enabledAction))
+
+			state := 0
+			if isEnabled == "ON" {
+				state = 1
+			}
+			label := iup.Label([]string{"Disabled", "Enabled"}[state])
+			label.SetAttribute("FGCOLOR", []string{"#ffb86c", "#50fa7b"}[state])
+			label.SetAttribute("SIZE", "30")
+			label.SetHandle(fmt.Sprintf("enabled%d", index))
+
+			custom = iup.Hbox(
+				toggle,
+				label,
+			)
+		case CONNECTION:
+		case CONTROL:
+			custom = iup.FlatButton("Find keycodes")
+			custom.SetAttributes(`PADDING=5, BGCOLOR="#50fa7b", FGCOLOR="#000000", HLCOLOR="#48d06d", PSCOLOR, BORDERWIDTH=0, FOCUSFEEDBACK="NO", EXPAND="VERTICAL"`)
+			custom.SetCallback("FLAT_ACTION", iup.FlatActionFunc(func(ih iup.Ihandle) int {
+				utils.OpenLink("https://www.toptal.com/developers/keycode")
+				return iup.DEFAULT
+			}))
+		}
+
+		container := iup.Hbox(
+			iup.Label(label).SetAttributes(`FGCOLOR="#bd93f9"`),
+			input,
+			custom,
+		).SetAttributes("SIZE=200, ALIGNMENT=ACENTER")
+
+		return container
+	}
+
+	frameGen := func(title string, components ...iup.Ihandle) iup.Ihandle {
+		return iup.Frame(
+			iup.Vbox(
+				append(components, iup.Space())...,
+			).SetAttributes("GAP=10, NMARGIN=10x5"),
+		).SetAttribute("TITLE", title)
+	}
+
+	labelsFrame := frameGen("Labels",
+		inputGen("Output 1", LABEL, "output1"),
+		inputGen("Output 2", LABEL, "output2"),
+		inputGen("Output 3", LABEL, "output3"),
+		inputGen("Output 4", LABEL, "output4"),
+	)
+
+	connectionFrame := frameGen("Connection",
+		inputGen("IP Address", CONNECTION, "ip"),
+	)
+
+	controlsFrame := frameGen("Controls",
+		inputGen("Hotkey", CONTROL, "hotkey"),
+	)
+
+	title := iup.Label("Sound Brick").SetAttributes(`FONTSIZE=24, FGCOLOR="#bd93f9"`)
+
+	mainContainer := iup.Vbox(
+		title,
+		labelsFrame,
+		connectionFrame,
+		controlsFrame,
+	).SetAttributes(`ALIGNMENT=ALEFT, NMARGIN=15x10, NGAP=10`)
+
+	iup.Show(iup.Dialog(mainContainer).SetAttribute("TITLE", title.GetAttribute("TITLE")))
+	iup.MainLoop()
 }
 
 func (switcher *Switcher) setupTray() {
@@ -615,7 +540,7 @@ func main() {
 
 	client := &Switcher{}
 
-	client.setupSettings()
+	// client.setupSettings()
 	client.setupConfig()
 
 	client.connect()
