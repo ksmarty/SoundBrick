@@ -6,14 +6,14 @@ on:
 
 jobs:
     release-windows-amd64:
-        name: release windows/amd64
-        runs-on: ubuntu-latest
+        name: build windows/amd64
+        runs-on: windows-latest
         steps:
             - uses: actions/checkout@main
-            - uses: wangyoucao577/go-release-action@v1.32
+            - run: go build -ldflags -H=windowsgui
+            - name: Upload binaries to release
+              uses: svenstaro/upload-release-action@v2
               with:
-                  github_token: ${{ secrets.GITHUB_TOKEN }}
-                  goos: windows
-                  goarch: amd64
-                  ldflags: -H=windowsgui
-                  compress_assets: OFF
+                  repo_token: ${{ secrets.GITHUB_TOKEN }}
+                  file: soundbrick.exe
+                  tag: ${{ github.ref }}
