@@ -30,6 +30,7 @@ C:/Users/kyles/go/bin/go2array -prefix Data -package blank blankwin.ico blank.pn
 ## Generate Icon rsrc
 
 ```sh
+go install github.com/akavel/rsrc
 %GOPATH%\bin\rsrc.exe -ico assets\icon\iconwin.ico
 ```
 
