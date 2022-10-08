@@ -27,6 +27,12 @@ C:/Users/kyles/go/bin/go2array -prefix Data -package check checkwin.ico check.pn
 C:/Users/kyles/go/bin/go2array -prefix Data -package blank blankwin.ico blank.png
 ```
 
+## Generate Icon rsrc
+
+```sh
+%GOPATH%\bin\rsrc.exe -ico assets\icon\iconwin.ico
+```
+
 ## Credits
 
 <a href="https://www.flaticon.com/free-icons/input" title="input icons">Input
