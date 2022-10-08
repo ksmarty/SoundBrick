@@ -8,7 +8,7 @@ By default, the hotkey is `\`. This can be changed in the settings.
 
 -   [x] Hotkey toggle
 -   [x] Renamable outputs
--   [ ] Disable inputs
+-   [x] Disable inputs
 -   [ ] Optional alert sound on switch
 
 ## Build
