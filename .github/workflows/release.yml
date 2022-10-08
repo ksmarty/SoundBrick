@@ -10,10 +10,6 @@ jobs:
         runs-on: windows-latest
         steps:
             - uses: actions/checkout@main
-            - name: Add icon
-              run: |
-                  go install github.com/akavel/rsrc
-                  ${{ env.HOMEPATH }}\go\bin\rsrc.exe -ico assets/icon/iconwin.ico
             - name: Build
               run: go1.19 build -ldflags -H=windowsgui
             - name: Upload binaries to release
