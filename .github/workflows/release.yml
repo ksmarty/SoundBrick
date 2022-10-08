@@ -13,7 +13,7 @@ jobs:
             - name: Add icon
               run: |
                   go install github.com/akavel/rsrc
-                  $HOME\go\bin\rsrc.exe -ico assets/icon/iconwin.ico
+                  ${{ env.HOMEPATH }}\go\bin\rsrc.exe -ico assets/icon/iconwin.ico
             - name: Build
               run: go1.19 build -ldflags -H=windowsgui
             - name: Upload binaries to release
