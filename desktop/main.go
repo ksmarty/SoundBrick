@@ -21,14 +21,30 @@ import (
 	"kyleschwartz/soundbrick/utils"
 
 	"github.com/gen2brain/iup-go/iup"
+
+	"github.com/brotherpowers/ipsubnet"
 )
 
+const SEND_PORT = ":4210"
+const REC_PORT = ":4211"
+
 type Switcher struct {
-	UDP        *net.UDPConn
 	prevOutput int
 	config     *ini.File
 	updated    map[string]chan string
+	IP         *net.UDPAddr
+	settings   iup.Ihandle
 }
+
+const (
+	OUT1         = 0
+	OUT2         = 1
+	OUT3         = 2
+	OUT4         = 3
+	MUTED        = 4
+	ERROR        = -1
+	CLIENT_CHECK = -2
+)
 
 func (switcher *Switcher) cycleOutput() {
 	conf := switcher.config.Section("").Key
@@ -41,7 +57,7 @@ func (switcher *Switcher) cycleOutput() {
 
 	x, _ := conf("current_output").Int()
 
-	if x == 4 {
+	if x == MUTED {
 		x = switcher.prevOutput
 	}
 
@@ -54,59 +70,94 @@ func (switcher *Switcher) cycleOutput() {
 }
 
 func (switcher *Switcher) muteToggle() {
-	if switcher.UDP == nil {
-		return
-	}
-
 	cur, _ := switcher.config.Section("").Key("current_output").Int()
 
-	if cur != 4 {
+	if cur != MUTED {
 		switcher.prevOutput = cur
 	}
 
-	switcher.sendUDP(4)
+	switcher.sendUDP(MUTED)
 }
 
 func (switcher *Switcher) noConn() {
-	utils.Alert("Error!", "Could not connect to device! Please change IP in settings.")
-	switcher.UDP = nil
+	utils.Alert("Error!", "Could not connect to device! Please change IP in settings.", 2)
+}
+
+func (switcher *Switcher) discover() {
+	conn, err := net.Dial("udp4", "1.1.1.1:80")
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	size, _ := localAddr.IP.DefaultMask().Size()
+
+	cidr := ipsubnet.SubnetCalculator(localAddr.IP.String(), size).GetBroadcastAddress() + SEND_PORT
+
+	switcher.IP, _ = net.ResolveUDPAddr("udp4", cidr)
+
+	switcher.sendUDP(CLIENT_CHECK)
 }
 
 func (switcher *Switcher) connect() {
-	sec := switcher.config.Section("")
+	Key := switcher.config.Section("").Key
 
-	userIP := sec.Key("ip").String()
-
-	s, _ := net.ResolveUDPAddr("udp4", userIP)
-	c, err := net.DialUDP("udp4", nil, s)
-
-	if err != nil || userIP != c.RemoteAddr().String() {
-		switcher.noConn()
+	if Key("ip").String() == "" {
+		switcher.discover()
 		return
 	}
 
-	switcher.UDP = c
+	switcher.IP, _ = net.ResolveUDPAddr("udp4", Key("ip").String()+SEND_PORT)
 
-	// Test connection
-	x, err := sec.Key("current_output").Int()
-	// If current is mute, request current output
-	if err != nil || x == 4 {
-		x = -2
+	x, err := Key("current_output").Int()
+	if err != nil || x == MUTED {
+		x = CLIENT_CHECK
 	}
 
-	switcher.sendUDP(x)
+	if switcher.sendUDP(x) {
+		utils.Alert("Connected!", "Successfully connected to device!", 2)
+	}
+}
 
-	if userIP != c.RemoteAddr().String() {
+func (switcher *Switcher) sendUDP(command int) bool {
+	pc, err := net.ListenPacket("udp4", REC_PORT)
+	if err != nil {
+		utils.Alert("Error!", "Another program on your computer is using port 4211!", 2)
+		panic(err)
+	}
+	pc.SetDeadline(time.Now().Add(time.Second))
+	defer pc.Close()
+
+	pc.WriteTo([]byte(strconv.Itoa(command)), switcher.IP)
+
+	buffer := make([]byte, 512)
+	n, recAddr, err := pc.ReadFrom(buffer)
+
+	if err != nil {
+		fmt.Println(err)
 		switcher.noConn()
-		return
+		return false
 	}
 
-	if switcher.UDP != nil {
-		fmt.Printf("The UDP server is %s\n", c.RemoteAddr().String())
-
-		utils.Alert("Connected!", "Successfully connected to device!")
+	if switcher.IP.String() != recAddr.String() {
+		ip, _, _ := net.SplitHostPort(recAddr.String())
+		switcher.updated["ip"] <- ip
+		switcher.save()
+		go switcher.connect()
+		return false
 	}
 
+	result, _ := strconv.Atoi(string(buffer[0:n]))
+
+	if result == ERROR {
+		utils.Alert("Oops!", "The system is currently muted. Please unmute to change outputs.", 1)
+		return false
+	}
+
+	switcher.updated["current_output"] <- strconv.Itoa(result)
+
+	return true
 }
 
 func (switcher *Switcher) setupHotkeys() {
@@ -144,73 +195,39 @@ func (switcher *Switcher) setupHotkeys() {
 	})
 }
 
-func (switcher *Switcher) sendUDP(command int) {
-	if switcher.UDP == nil {
-		return
-	}
-
-	fmt.Printf("Sending packet: %d\n", command)
-
-	_, err := switcher.UDP.Write([]byte(strconv.Itoa(command)))
-
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	timeout, _ := time.ParseDuration("1s")
-	switcher.UDP.SetReadDeadline(time.Now().Add(timeout))
-
-	buffer := make([]byte, 512)
-	n, _, err := switcher.UDP.ReadFromUDP(buffer)
-
-	if err != nil {
-		println(err.Error())
-		switcher.noConn()
-		return
-	}
-
-	result, _ := strconv.Atoi(string(buffer[0:n]))
-
-	println(result)
-
-	if result == -1 {
-		utils.Alert("Oops!", "The system is currently muted. Please unmute to change outputs.")
-		return
-	}
-
-	switcher.updated["current_output"] <- strconv.Itoa(result)
-}
-
 func (switcher *Switcher) save() error {
-	dir, _ := os.UserConfigDir()
 	if utils.IsDev() {
 		return switcher.config.SaveTo("./config.ini")
-	} else {
-		return switcher.config.SaveTo(fmt.Sprintf("%s/soundbrick/config.ini", dir))
 	}
+
+	dir, _ := os.UserConfigDir()
+	return switcher.config.SaveTo(fmt.Sprintf("%s/soundbrick/config.ini", dir))
 }
 
 func importConfig(switcher *Switcher) {
 	go func() {
+		Key := switcher.config.Section("").Key
+
 		update := func(key string, value string) {
-			switcher.config.Section("").Key(key).SetValue(value)
+			Key(key).SetValue(value)
 			switcher.updated["refresh_tray"] <- key
 		}
 
 		notif := func(command string) {
 			value, _ := strconv.Atoi(command)
 
-			if value > -1 && value < 4 {
+			if value >= OUT1 && value <= OUT4 {
 				utils.Alert(
 					"Output Changed!",
-					fmt.Sprintf("Current output: %s", switcher.config.Section("").Key(fmt.Sprintf("output%d", value+1)).String()),
+					fmt.Sprintf("Current output: %s", Key(fmt.Sprintf("output%d", value+1)).String()),
+					1,
 				)
-			} else if value == 4 {
-				utils.Alert("Muted!", "Output has been muted.")
-			} else if value == -2 {
-				// Request current
+			} else if value == MUTED {
+				utils.Alert("Muted!", "Output has been muted.", 1)
+			} else if value == CLIENT_CHECK {
+				// Client check
 			} else {
-				utils.Alert("Error!", "That's not a valid command! How'd you do that??")
+				utils.Alert("Error!", "That's not a valid command! How'd you do that??", 1)
 			}
 		}
 
@@ -368,6 +385,13 @@ func (switcher *Switcher) openSettings() {
 				label,
 			)
 		case CONNECTION:
+			custom = iup.FlatButton("Auto Connect")
+			custom.SetAttributes(`PADDING=5, BGCOLOR="#50fa7b", FGCOLOR="#000000", HLCOLOR="#48d06d", PSCOLOR, BORDERWIDTH=0, FOCUSFEEDBACK="NO", EXPAND="VERTICAL"`)
+			custom.SetCallback("FLAT_ACTION", iup.FlatActionFunc(func(ih iup.Ihandle) int {
+				switcher.discover()
+				switcher.openSettings()
+				return iup.DEFAULT
+			}))
 		case CONTROL:
 			custom = iup.FlatButton("Find keycodes")
 			custom.SetAttributes(`PADDING=5, BGCOLOR="#50fa7b", FGCOLOR="#000000", HLCOLOR="#48d06d", PSCOLOR, BORDERWIDTH=0, FOCUSFEEDBACK="NO", EXPAND="VERTICAL"`)
@@ -418,7 +442,10 @@ func (switcher *Switcher) openSettings() {
 		controlsFrame,
 	).SetAttributes(`ALIGNMENT=ALEFT, NMARGIN=15x10, NGAP=10`)
 
-	iup.Show(iup.Dialog(mainContainer).SetAttribute("TITLE", title.GetAttribute("TITLE")))
+	content := iup.Dialog(mainContainer).SetAttribute("TITLE", title.GetAttribute("TITLE"))
+	iup.Show(content)
+	iup.Hide(switcher.settings)
+	switcher.settings = content
 	iup.MainLoop()
 }
 
@@ -449,7 +476,7 @@ func (switcher *Switcher) setupTray() {
 			for _, v := range outs {
 				v.SetIcon(blank.Data)
 			}
-			if item > -1 && item < 4 {
+			if item >= OUT1 && item <= OUT4 {
 				outs[item].SetIcon(check.Data)
 			}
 		}
@@ -476,18 +503,18 @@ func (switcher *Switcher) setupTray() {
 			case <-mMute.ClickedCh:
 				switcher.muteToggle()
 
-			case <-outs[0].ClickedCh:
-				switcher.sendUDP(0)
-				setChecks(0)
-			case <-outs[1].ClickedCh:
-				switcher.sendUDP(1)
-				setChecks(1)
-			case <-outs[2].ClickedCh:
-				switcher.sendUDP(2)
-				setChecks(2)
-			case <-outs[3].ClickedCh:
-				switcher.sendUDP(3)
-				setChecks(3)
+			case <-outs[OUT1].ClickedCh:
+				switcher.sendUDP(OUT1)
+				setChecks(OUT1)
+			case <-outs[OUT2].ClickedCh:
+				switcher.sendUDP(OUT2)
+				setChecks(OUT2)
+			case <-outs[OUT3].ClickedCh:
+				switcher.sendUDP(OUT3)
+				setChecks(OUT3)
+			case <-outs[OUT4].ClickedCh:
+				switcher.sendUDP(OUT4)
+				setChecks(OUT4)
 
 			case <-mSettings.ClickedCh:
 				go switcher.openSettings()
@@ -502,15 +529,15 @@ func (switcher *Switcher) setupTray() {
 			case v := <-switcher.updated["refresh_tray"]:
 				switch v {
 				case "output1":
-					outs[0].SetTitle(key(v).String())
+					outs[OUT1].SetTitle(key(v).String())
 				case "output2":
-					outs[1].SetTitle(key(v).String())
+					outs[OUT2].SetTitle(key(v).String())
 				case "output3":
-					outs[2].SetTitle(key(v).String())
+					outs[OUT3].SetTitle(key(v).String())
 				case "output4":
-					outs[3].SetTitle(key(v).String())
+					outs[OUT4].SetTitle(key(v).String())
 				case "current_output":
-					if cur() != 4 {
+					if cur() != MUTED {
 						setChecks(cur())
 						mMute.SetTitle("Mute")
 					} else {
@@ -528,9 +555,6 @@ func (switcher *Switcher) exit() {
 	fmt.Println("Closing...")
 
 	switcher.save()
-	if switcher.UDP != nil {
-		switcher.UDP.Close()
-	}
 
 	os.Exit(0)
 }
@@ -540,7 +564,6 @@ func main() {
 
 	client := &Switcher{}
 
-	// client.setupSettings()
 	client.setupConfig()
 
 	client.connect()

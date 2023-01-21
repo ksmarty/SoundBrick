@@ -8,10 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"kyleschwartz/soundbrick/assets/icon"
 
 	"github.com/electricbubble/go-toast"
+	"github.com/ethereum/go-ethereum/common/prque"
 	"gopkg.in/ini.v1"
 )
 
@@ -33,16 +35,33 @@ func OpenLink(url string) {
 	}
 }
 
-func Alert(title string, content string) {
-	Prod(func() {
-		go toast.Push(content,
-			toast.WithTitle(title),
+var queue = prque.New(nil)
+
+type AlertItem struct {
+	title, content string
+}
+
+func Alert(title string, content string, priority int64) {
+	queue.Push(AlertItem{title, content}, priority)
+
+	go func() {
+		time.Sleep(350 * time.Millisecond)
+
+		if queue.Empty() {
+			return
+		}
+
+		data := queue.PopItem().(AlertItem)
+		queue.Reset()
+
+		toast.Push(data.content,
+			toast.WithTitle(data.title),
 			toast.WithAppID("Sound Brick"),
 			toast.WithAudio(toast.Default),
 			toast.WithShortDuration(),
 			toast.WithIconRaw(icon.Data),
 		)
-	})
+	}()
 }
 
 func Load() *ini.File {

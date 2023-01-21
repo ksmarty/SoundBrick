@@ -1,10 +1,14 @@
 github.com/benbjohnson/clock v1.1.0 h1:Q92kusRqC1XV2MjkWETPvjJVqKetz1OzxZB7mHJLju8=
 github.com/benbjohnson/clock v1.1.0/go.mod h1:J11/hYXuz8f4ySSvYwY0FKfm+ezbsZBKZxNJlLklBHA=
+github.com/brotherpowers/ipsubnet v0.0.0-20170914094241-30bc98f0a5b1 h1:80OMQcGycPqKFFabSaxOagCh7mgspnMl/X3YGmNi+j0=
+github.com/brotherpowers/ipsubnet v0.0.0-20170914094241-30bc98f0a5b1/go.mod h1:mm9ZF6W76SwZtJpYzrVmTMuzmIhPX0SIuEosW/OTFd4=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/electricbubble/go-toast v0.3.0 h1:e/PtFkpYNdLANI/utTXzoYQuMYG/N8oHT0Rwal4z/sI=
 github.com/electricbubble/go-toast v0.3.0/go.mod h1:6k4ufXmV/AS32EugdLeIXa+2jv6oYbWzv2+UZhB49FI=
+github.com/ethereum/go-ethereum v1.10.26 h1:i/7d9RBBwiXCEuyduBQzJw/mKmnvzsN14jqBmytw72s=
+github.com/ethereum/go-ethereum v1.10.26/go.mod h1:EYFyF19u3ezGLD4RqOkLq+ZCXzYbLoNDdZlMt7kyKFg=
 github.com/gen2brain/iup-go/iup v0.0.0-20220906102819-1bdd927a85b2 h1:AoJX+p/y/u1FYnAYzUo9s7Ji81dViSIDOQnFXciF2Jg=
 github.com/gen2brain/iup-go/iup v0.0.0-20220906102819-1bdd927a85b2/go.mod h1:2weR8HxPYyoPmAjcG2khdicw8WFwrCze3pVbYjNUlGc=
 github.com/getlantern/context v0.0.0-20190109183933-c447772a6520/go.mod h1:L+mq6/vvYHKjCX2oez0CgEAJmbq1fbb/oNJIWQkBybY=

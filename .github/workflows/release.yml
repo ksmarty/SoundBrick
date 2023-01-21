@@ -1,23 +1,26 @@
 name: release
 
 on:
-    release:
-        types: [created]
+  release:
+    types: [created]
 
 jobs:
-    release-windows-amd64:
-        name: build windows/amd64
-        runs-on: windows-latest
-        steps:
-            - uses: actions/checkout@main
-            - uses: actions/setup-go@v3
-              with:
-                  go-version: "1.19.1"
-            - name: Build
-              run: go build -ldflags -H=windowsgui
-            - name: Upload binaries to release
-              uses: svenstaro/upload-release-action@v2
-              with:
-                  repo_token: ${{ secrets.GITHUB_TOKEN }}
-                  file: soundbrick.exe
-                  tag: ${{ github.ref }}
+  release-windows-amd64:
+    name: build windows/amd64
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: ./desktop
+    steps:
+      - uses: actions/checkout@main
+      - uses: actions/setup-go@v3
+        with:
+          go-version: "1.19.1"
+      - name: Build
+        run: go build -ldflags -H=windowsgui
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: soundbrick.exe
+          tag: ${{ github.ref }}

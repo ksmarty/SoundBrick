@@ -11,6 +11,7 @@ require (
 )
 
 require (
+	github.com/brotherpowers/ipsubnet v0.0.0-20170914094241-30bc98f0a5b1
 	github.com/getlantern/context v0.0.0-20220418194847-3d5e7a086201 // indirect
 	github.com/getlantern/errors v1.0.3 // indirect
 	github.com/getlantern/golog v0.0.0-20211223150227-d4d95a44d873 // indirect
@@ -33,5 +34,6 @@ require (
 
 require (
 	github.com/electricbubble/go-toast v0.3.0
+	github.com/ethereum/go-ethereum v1.10.26
 	golang.design/x/mainthread v0.3.0 // indirect
 )

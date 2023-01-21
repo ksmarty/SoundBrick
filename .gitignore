@@ -1,1 +1,4 @@
-__debug_bin.exe
+desktop/__debug_bin.exe
+arduino/lib/arduino_secrets.h
+arduino/build
+arduino/.vscode
